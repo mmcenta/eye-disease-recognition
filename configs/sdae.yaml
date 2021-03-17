@@ -1,0 +1,10 @@
+model: 'sdae'
+n_epochs: 50
+image_size: 224
+test_fraction: 0.1
+test_freq: 40
+lr: 0.001
+batch_size: 64
+emb_channels: [16, 32]
+noise_std: 0.1
+share_weights: False

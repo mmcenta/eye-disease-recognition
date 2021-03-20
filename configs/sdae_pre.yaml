@@ -1,0 +1,10 @@
+model: 'sdae-pre'
+n_epochs: 20
+image_size: 224
+test_fraction: 0.1
+test_freq: 43
+lr: 0.005
+batch_size: 64
+emb_channels: [8, 16, 32]
+noise_std: 0.2
+share_weights: True

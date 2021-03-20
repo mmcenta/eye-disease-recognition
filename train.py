@@ -1,10 +1,11 @@
+from classification import SDAEClassification
 import os
 import shutil
 
 import torch
 from torch import nn
 from torch.optim import Adam
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, SubsetRandomSampler, random_split
 from torch.utils.tensorboard import SummaryWriter
 import tqdm
 import yaml
@@ -19,8 +20,28 @@ def batch_to_device(batch, device):
     return batch
 
 
-def run_sdae(configs, dataset, writer, name='sdae', device=None):
-    os.makedirs('./checkpoints/{}/', exist_ok=True)
+def run_linear_classification(configs, dataset, train_indices, test_indices, 
+    base_model_fn, writer, name, device):
+
+    # prepare data loaders
+    train_sampler = SubsetRandomSampler(train_indices)
+    test_sampler = SubsetRandomSampler(test_indices)
+    train_loader = DataLoader(dataset, batch_size=configs['batch_size'], 
+        shuffle=True, sampler=train_sampler, pin_memory=True)
+    test_loader = DataLoader(dataset, batch_size=configs['batch_size'], 
+        sampler=test_sampler, pin_memory=True)
+
+    # create model
+    model = SDAEClassification(8, base_model_fn, freeze=configs['freeze'])
+
+
+def run_sdae_finetuning(configs, dataset, writer, name, device):
+
+
+
+
+def run_sdae_pretraining(configs, dataset, writer, name, device):
+    os.makedirs('./checkpoints/{}/'.format(name), exist_ok=True)
 
     # split into training and testing
     test_len = int(configs['test_fraction'] * len(dataset))
@@ -45,10 +66,8 @@ def run_sdae(configs, dataset, writer, name='sdae', device=None):
     model = model.to(device)
     optimizer = Adam(model.parameters(), configs['lr'])
     
-    iters = 0
+    iters, train_losses = 0, []
     for epoch in range(configs['n_epochs']):
-        train_losses, test_losses = [], []
-
         # training loop
         for batch in tqdm.tqdm(train_loader):
             batch = batch_to_device(batch, device)
@@ -80,7 +99,8 @@ def run_sdae(configs, dataset, writer, name='sdae', device=None):
                 print('epoch {}\n'
                       '  train loss = {}\n'
                       '  test loss  = {}'.format(
-                        epoch, sum(train_losses) / len(train_losses), sum(test_losses) / len(test_losses))) 
+                        epoch, sum(train_losses) / len(train_losses), sum(test_losses) / len(test_losses)))
+                train_losses = []
 
         # save checkpoint
         checkpoint_path = os.path.join('./checkpoints/{}/{}.ckpt'.format(
@@ -117,11 +137,13 @@ if __name__ == "__main__":
     if not name:
         name = configs['model']
     
-    shutil.rmtree('./logs/{}/'.format(name)) # clear previous logs with the same experiment name
+    log_dir = './logs/{}/'.format(name)
+    if os.path.exists(log_dir):
+        shutil.rmtree(log_dir) # clear previous logs with the same experiment name
     writer = SummaryWriter(log_dir='./logs/{}/'.format(name))
 
     # run experiment
-    if configs['model'] == 'sdae':
-        run_sdae(configs, dataset, writer, name=name, device=device)
+    if configs['model'] == 'sdae-pre':
+        run_sdae_pretraining(configs, dataset, writer, name, device)
     
     writer.close()

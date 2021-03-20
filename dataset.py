@@ -35,15 +35,33 @@ def load_image(path, transform):
     return transform(Image.open(path))
 
 
+def get_augmentation_transform(h_flip=False):
+    aug_list = []
+    if h_flip:
+        aug_list.append(transforms.RandomHorizontalFlip())
+    aug_list.extend([
+        transforms.ColorJitter(
+            brightness=0.4,
+            contrast=0.4,
+            saturation=0.2,
+            hue=0.1),
+        transforms.RandomGrayscale(),
+        #transforms.GaussianBlur(23),
+    ])
+    return transforms.Compose(aug_list)
+
+
 class ODIRDataset(Dataset):
-    def __init__(self, csv_file, image_dir, img_size, **kwargs):
+    def __init__(self, csv_file, image_dir, img_size, h_flip=True, **kwargs):
         super(ODIRDataset, self).__init__(**kwargs)
 
         self.csv_file = csv_file
         self.image_dir = image_dir
         self.transform = transforms.Compose([
             transforms.Resize(img_size),
-            transforms.ToTensor()])
+            transforms.ToTensor(),
+            get_augmentation_transform(h_flip),
+        ])
 
         self._df = pd.read_csv(csv_file)
         self._df = remove_missing(self._df, image_dir)

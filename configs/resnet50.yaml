@@ -7,5 +7,5 @@ n_folds: 5
 n_epochs: 5
 image_size: 224
 batch_size: 64
-test_freq: 43
+test_freq: 38
 lr: 0.001

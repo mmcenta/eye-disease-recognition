@@ -35,7 +35,7 @@ def load_image(path, transform):
     return transform(Image.open(path))
 
 
-def get_augmentation_transform(h_flip=False):
+def get_augmentation_transform(h_flip=False, normalize=False):
     aug_list = []
     if h_flip:
         aug_list.append(transforms.RandomHorizontalFlip())
@@ -46,25 +46,49 @@ def get_augmentation_transform(h_flip=False):
             saturation=0.2,
             hue=0.1),
         transforms.RandomGrayscale(),
-        #transforms.GaussianBlur(23),
     ])
+    if normalize:
+        aug_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
     return transforms.Compose(aug_list)
 
 
 class ODIRDataset(Dataset):
-    def __init__(self, csv_file, image_dir, img_size, h_flip=True, **kwargs):
+    def __init__(self, csv_file, image_dir, img_size, target_col, balanced=False, normalize=False, h_flip=False, **kwargs):
         super(ODIRDataset, self).__init__(**kwargs)
 
         self.csv_file = csv_file
         self.image_dir = image_dir
+        self.image_size = img_size
+        self.target_col = target_col
+        self.balanced = balanced
         self.transform = transforms.Compose([
             transforms.Resize(img_size),
             transforms.ToTensor(),
-            get_augmentation_transform(h_flip),
+            get_augmentation_transform(h_flip, normalize),
         ])
 
         self._df = pd.read_csv(csv_file)
         self._df = remove_missing(self._df, image_dir)
+        
+        self.targets, self.weight = [], torch.zeros(8) if self.target_col < 0 else torch.zeros(2)
+        for idx in range(len(self._df)):
+            item = self._df.iloc[idx]
+            
+            target = torch.tensor(list(map(int, item['target'][1:-1].split(','))), dtype=torch.long)
+            if self.target_col < 0:
+                target = torch.argmax(target)
+            else:
+                target = (torch.argmax(target) == self.target_col).long()
+
+            self.targets.append(target)
+            self.weight[target] += 1
+        
+        self.weight  = self.weight / torch.sum(self.weight)
+
+    def get_weight(self):
+        if self.weight.size(0) > 2:
+            return self.weight
+        return self.weight[1]
 
     def __len__(self):
         return len(self._df)
@@ -76,12 +100,8 @@ class ODIRDataset(Dataset):
         left_image = load_image(os.path.join(self.image_dir, item['Left-Fundus']), self.transform)
         right_image = load_image(os.path.join(self.image_dir, item['Right-Fundus']), self.transform)
 
-        # load target
-        target = list(map(int, item['target'][1:-1].split(',')))
-        target = torch.argmax(torch.tensor(target, dtype=torch.long))
-
         return {
             'left_image': left_image,
             'right_image': right_image,
-            'target': target,
+            'target': self.targets[idx],
         }

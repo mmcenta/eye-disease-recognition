@@ -215,9 +215,7 @@ if __name__ == "__main__":
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu' # use GPU if available
 
-    dataset = ODIRDataset(args.csv_file, args.image_dir, configs['image_size'],
-        configs['target_col'], balanced=configs['balanced'],
-        normalize=configs['normalize'])
+    dataset = ODIRDataset(configs, args.csv_file, args.image_dir)
 
     name = args.name
     if not name:

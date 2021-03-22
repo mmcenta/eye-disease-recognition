@@ -53,18 +53,20 @@ def get_augmentation_transform(h_flip=False, normalize=False):
 
 
 class ODIRDataset(Dataset):
-    def __init__(self, csv_file, image_dir, img_size, target_col, balanced=False, normalize=False, h_flip=False, **kwargs):
+    def __init__(self, configs, csv_file, image_dir, **kwargs):
         super(ODIRDataset, self).__init__(**kwargs)
 
         self.csv_file = csv_file
         self.image_dir = image_dir
-        self.image_size = img_size
-        self.target_col = target_col
-        self.balanced = balanced
+        self.image_size = configs['image_size']
+        self.target_col = configs.get('target_col', -1)
+        self.balanced = configs.get('balanced', False)
+        self.h_flip = configs.get('h_flip', False)
+        self.normalize = configs.get('normalize', False)
         self.transform = transforms.Compose([
-            transforms.Resize(img_size),
+            transforms.Resize(self.image_size),
             transforms.ToTensor(),
-            get_augmentation_transform(h_flip, normalize),
+            get_augmentation_transform(self.h_flip, self.normalize),
         ])
 
         self._df = pd.read_csv(csv_file)

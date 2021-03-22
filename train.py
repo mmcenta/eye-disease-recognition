@@ -95,7 +95,7 @@ def run_linear_classification(configs, dataset, train_loader, test_loader,
     # prepare model, loss, and optimizer
     model = model.to(device)
     if configs['target_col'] < 0:
-        loss_fn = nn.CrossEntropyLoss(weight=dataset.get_weight())
+        loss_fn = nn.CrossEntropyLoss(weight=dataset.get_weight().to(device))
     else:
         loss_fn = nn.BCEWithLogitsLoss(pos_weight=dataset.get_weight())
     optimizer = Adam(model.parameters(), configs['lr'])

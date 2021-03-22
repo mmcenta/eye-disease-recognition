@@ -1,0 +1,11 @@
+model: 'resnet50'
+normalize: True
+balanced: True
+freeze: True
+target_col: -1
+n_folds: 5
+n_epochs: 5
+image_size: 224
+batch_size: 64
+test_freq: 43
+lr: 0.001

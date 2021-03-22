@@ -1,0 +1,12 @@
+model: 'sdae'
+sdae_checkpoint: './checkpoints/sdae-pre/19.ckpt'
+normalize: False
+balanced: False
+freeze: False
+target_col: -1
+n_folds: 5
+n_epochs: 5
+image_size: 224
+batch_size: 64
+test_freq: 43
+lr: 0.001

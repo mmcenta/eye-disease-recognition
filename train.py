@@ -9,11 +9,13 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader, SubsetRandomSampler, random_split
 from torch.utils.tensorboard import SummaryWriter
 import torchvision
+from torchvision.models.resnet import resnet50
 import tqdm
 import yaml
 
 from classification import SDAEClassification, ResNet50Classification
-from dataset import ODIRDataset
+from dataset import ODIRDataset, collate_fn
+from joint import JointResNet50Model
 from SDAE import TwinSDAE
 from utils import batch_to_device, update_metrics, write_logs, print_last_logs, get_cv_indices
 
@@ -86,18 +88,18 @@ def run_sdae_pretraining(configs, dataset, writer, name, device):
         torch.save(model, checkpoint_path)
 
 
-def run_linear_classification(configs, dataset, train_loader, test_loader,
-    model, writer, name, device):
+def run_experiment(configs, train_loader, test_loader, model, loss_fn, writer,
+    name, device, feed_batch=False):
 
     print('Starting inear finetuning with name {}'.format(name))
     os.makedirs('./checkpoints/{}/'.format(name), exist_ok=True)
+    get_logits = lambda out: out['logits']
+    if not feed_batch:
+        get_logits = lambda x: x
+        loss_fn = lambda out, batch: loss_fn(get_logits(out), batch['target'])
 
     # prepare model, loss, and optimizer
     model = model.to(device)
-    if configs['target_col'] < 0:
-        loss_fn = nn.CrossEntropyLoss(weight=dataset.get_weight().to(device))
-    else:
-        loss_fn = nn.BCEWithLogitsLoss(pos_weight=dataset.get_weight())
     optimizer = Adam(model.parameters(), configs['lr'])
 
     iters, metrics, logs = 0, defaultdict(list), defaultdict(list)
@@ -105,15 +107,15 @@ def run_linear_classification(configs, dataset, train_loader, test_loader,
         # training loop
         for batch in tqdm.tqdm(train_loader):
             batch = batch_to_device(batch, device)
-            logits = model(batch['left_image'], batch['right_image'])
+            out = model(batch['left_image'], batch['right_image'])
 
-            loss = loss_fn(logits, batch['target'])
+            loss = loss_fn(out, batch)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             iters += 1
 
-            update_metrics(metrics, loss, logits, batch['target'], training=True)
+            update_metrics(metrics, loss, get_logits(out), batch['target'], training=True)
 
             # evaluate on test set
             if iters % configs['test_freq'] == 0:
@@ -121,9 +123,9 @@ def run_linear_classification(configs, dataset, train_loader, test_loader,
                 with torch.no_grad():
                     for batch in test_loader:
                         batch = batch_to_device(batch, device)
-                        logits = model(batch['left_image'], batch['right_image'])
-                        loss = loss_fn(logits, batch['target'])
-                        update_metrics(metrics, loss, logits, batch['target'], training=False)
+                        out = model(batch['left_image'], batch['right_image'])
+                        loss = loss_fn(out, batch)
+                        update_metrics(metrics, loss, get_logits(out), batch['target'], training=False)
 
                 write_logs(logs, iters, metrics, writer)
                 model.train()
@@ -139,7 +141,8 @@ def run_linear_classification(configs, dataset, train_loader, test_loader,
     return logs
 
 
-def run_cv_finetuning(configs, model_fn, dataset, writer, name, device):
+def run_cv_training(configs, model_fn, loss_fn, dataset, writer, name, device,
+    feed_batch=False, collate_fn=None):
     for cv, (train_indices, test_indices) in enumerate(get_cv_indices(dataset, configs['n_folds'])):
         # load model
         model = model_fn()
@@ -148,13 +151,14 @@ def run_cv_finetuning(configs, model_fn, dataset, writer, name, device):
         train_sampler = SubsetRandomSampler(train_indices)
         test_sampler = SubsetRandomSampler(test_indices)
         train_loader = DataLoader(dataset, batch_size=configs['batch_size'], 
-            sampler=train_sampler, pin_memory=True)
+            sampler=train_sampler, pin_memory=True, collate_fn=collate_fn)
         test_loader = DataLoader(dataset, batch_size=configs['batch_size'], 
-            sampler=test_sampler, pin_memory=True)
+            sampler=test_sampler, pin_memory=True, collate_fn=collate_fn)
 
         # run experiment
-        logs = run_linear_classification(configs, dataset, train_loader, test_loader,
-                    model, writer, '{}_cv{}'.format(name, cv), device)
+        logs = run_experiment(configs, train_loader, test_loader,
+                    model, loss_fn, writer, '{}_cv{}'.format(name, cv), device,
+                    feed_batch=feed_batch)
         
         with open('./logs/{}/cv_{}_logs.pkl'.format(name, cv), 'wb') as f:
             pickle.dump(logs, f)
@@ -166,15 +170,21 @@ def run_sdae_finetuning(configs, dataset, writer, name, device):
     # build classification model
     def base_model_fn():
         model = torch.load(configs['sdae_checkpoint'], map_location=device)
-        fake_image = torch.randn(1, 3, configs['image_size'], configs['image_size'])
+        fake_image = torch.randn(1, 3, configs['image_size'], configs['image_size'], device=device)
         out = model(fake_image, fake_image)
         emb_size = out['left'][0][-1].size()
         return model, emb_size
 
     n_classes = 8 if configs['target_col'] < 0 else 1
     model_fn = lambda: SDAEClassification(n_classes, base_model_fn, freeze=configs['freeze'])
+
+    # get loss function
+    if configs['target_col'] < 0:
+        loss_fn = nn.CrossEntropyLoss(weight=dataset.get_weight().to(device))
+    else:
+        loss_fn = nn.BCEWithLogitsLoss(pos_weight=dataset.get_weight())
     
-    run_cv_finetuning(configs, model_fn, dataset, writer, name, device)
+    run_cv_training(configs, model_fn, loss_fn, dataset, writer, name, device)
 
 
 def run_resnet50_finetuning(configs, dataset, writer, name, device):
@@ -188,8 +198,49 @@ def run_resnet50_finetuning(configs, dataset, writer, name, device):
 
     n_classes = 8 if configs['target_col'] < 0 else 1
     model_fn = lambda: ResNet50Classification(n_classes, base_model_fn, freeze=configs['freeze'])
-    
-    run_cv_finetuning(configs, model_fn, dataset, writer, name, device)
+
+    if configs['target_col'] < 0:
+        loss_fn = nn.CrossEntropyLoss(weight=dataset.get_weight().to(device))
+    else:
+        loss_fn = nn.BCEWithLogitsLoss(pos_weight=dataset.get_weight())
+
+    run_cv_training(configs, model_fn, loss_fn, dataset, writer, name, device)
+
+
+def run_joint_model(configs, dataset, writer, name, device):
+    print('Training Joint model...')
+
+    # build joint model
+    def resnet50_fn():
+        model = torchvision.models.resnet50(pretrained=True)
+        emb_size = (model.fc.in_features,)
+        return model, emb_size
+
+    n_classes = 8 if configs['target_col'] < 0 else 1
+    model_fn = lambda: JointResNet50Model(n_classes, dataset.vocab_size, configs['emb_size'], resnet50_fn)
+
+    if configs['target_col'] < 0:
+        class_loss_fn = nn.CrossEntropyLoss(weight=dataset.get_weight().to(device))
+    else:
+        class_loss_fn = nn.BCEWithLogitsLoss(pos_weight=dataset.get_weight())
+
+    align_loss_fn = nn.MultiLabelSoftMarginLoss()
+    def loss_fn(out, batch):
+        loss = class_loss_fn(out['logits'], batch['target'])
+        batch_size = batch['target'].size(0)
+        n_words = out['left_sim'].size(1)
+        for side in ('left', 'right'):
+            multi_target = torch.zeros(batch_size, n_words, requires_grad=False)
+            for i in range(batch_size):
+                for idx in batch[side + '_keyword'][:, i]:
+                    multi_target[i][idx] = 1.
+
+            loss += configs['lambda'] * align_loss_fn(
+                out[side + '_sim'], multi_target)
+        return loss
+
+    run_cv_training(configs, model_fn, loss_fn, dataset, writer, name, device,
+        feed_batch=True, collate_fn=collate_fn)
 
 
 if __name__ == "__main__":
@@ -233,5 +284,7 @@ if __name__ == "__main__":
         run_sdae_finetuning(configs, dataset, writer, name, device)
     elif configs['model'] == 'resnet50':
         run_resnet50_finetuning(configs, dataset, writer, name, device)
+    elif configs['model'] == 'joint':
+        run_joint_model(configs, dataset, writer, name, device)
     
     writer.close()

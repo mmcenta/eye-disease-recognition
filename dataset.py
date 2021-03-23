@@ -4,7 +4,13 @@ import pandas as pd
 from PIL import Image
 import torch
 from torch.utils.data import Dataset
+from torch.nn.utils.rnn import pad_sequence
 from torchvision import transforms
+
+
+STOP_WORDS = set([
+    "age", "the"
+])
 
 
 def remove_missing(df, image_dir):
@@ -52,6 +58,49 @@ def get_augmentation_transform(h_flip=False, normalize=False):
     return transforms.Compose(aug_list)
 
 
+KEYWORD_MAP = {
+    'Left-Diagnostic Keywords': 'left',
+    'Right-Diagnostic Keywords': 'right',
+}
+
+def process_keywords(df):
+    keywords = {} # indices for keywords for each eye
+    word2idx, n_words = {'_': 0}, 1
+    for col, key in KEYWORD_MAP.items():
+        df[key] = df[col].str.replace(r'[^a-zA-Z\s]+', ' ', regex=True)
+        df[key] = df[key].str.replace(r' +', ' ', regex=True)
+
+        keywords[key] = []
+        for idx in range(len(df)):
+            item = df.iloc[idx]
+
+            indices = []
+            for kw in item[key].split():
+                if kw in STOP_WORDS:
+                    continue
+
+                if kw not in word2idx:
+                    word2idx[kw] = n_words
+                    n_words += 1
+                indices.append(word2idx[kw])
+
+            keywords[key].append(torch.tensor(indices, dtype=torch.long))
+
+    return word2idx, keywords
+
+
+def collate_fn(batch):
+    out = {'left_image': [], 'right_image': [], 'target': [], 'left_keyword': [], 'right_keyword': []}
+    for item in batch:
+        for key in out:
+            out[key].append(item[key])
+    for key in ('left_image', 'right_image', 'target'):
+        out[key] = torch.stack(out[key])
+    for key in ('left_keyword', 'right_keyword'):
+        out[key] = pad_sequence(out[key])
+    return out
+
+
 class ODIRDataset(Dataset):
     def __init__(self, configs, csv_file, image_dir, **kwargs):
         super(ODIRDataset, self).__init__(**kwargs)
@@ -71,6 +120,10 @@ class ODIRDataset(Dataset):
 
         self._df = pd.read_csv(csv_file)
         self._df = remove_missing(self._df, image_dir)
+
+        self.word2idx, self.keywords = process_keywords(self._df)
+        self.idx2word = {i:w for w, i in self.word2idx.items()}
+        self.vocab_size = len(self.word2idx)
         
         self.targets, self.weight = [], torch.zeros(8) if self.target_col < 0 else torch.zeros(2)
         for idx in range(len(self._df)):
@@ -106,4 +159,6 @@ class ODIRDataset(Dataset):
             'left_image': left_image,
             'right_image': right_image,
             'target': self.targets[idx],
+            'left_keyword': self.keywords['left'][idx],
+            'right_keyword': self.keywords['right'][idx],
         }

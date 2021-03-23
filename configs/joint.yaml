@@ -1,0 +1,12 @@
+model: 'joint'
+normalize: True
+balanced: True
+lambda: 0.1
+emb_size: 16
+target_col: -1
+n_folds: 5
+n_epochs: 5
+image_size: 224
+batch_size: 64
+test_freq: 38
+lr: 0.001

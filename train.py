@@ -230,7 +230,7 @@ def run_joint_model(configs, dataset, writer, name, device):
         batch_size = batch['target'].size(0)
         n_words = out['left_sim'].size(1)
         for side in ('left', 'right'):
-            multi_target = torch.zeros(batch_size, n_words, requires_grad=False)
+            multi_target = torch.zeros(batch_size, n_words, requires_grad=False, device=device)
             for i in range(batch_size):
                 for idx in batch[side + '_keyword'][:, i]:
                     multi_target[i][idx] = 1.

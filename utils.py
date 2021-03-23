@@ -48,7 +48,7 @@ MULTI_METRICS_TO_FN = {
 
 
 def update_metrics(metrics, loss, logits, target, training=True):
-    loss, logits = loss.detach().cpu(), logits.detach().cpu()
+    loss, logits, target = loss.detach().cpu(), logits.detach().cpu(), target.cpu()
     prefix = 'train_' if training else 'test_'
     metrics[prefix + 'loss'].append(loss.detach().item())
     metrics_to_fn = MULTI_METRICS_TO_FN if logits.size(1) > 1 else BINARY_METRICS_TO_FN 

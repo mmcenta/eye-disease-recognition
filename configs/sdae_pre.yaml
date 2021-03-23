@@ -1,4 +1,5 @@
 model: 'sdae-pre'
+normalize: False
 n_epochs: 20
 image_size: 224
 test_fraction: 0.1
